@@ -17,7 +17,7 @@ from pathlib import Path
 
 # Set page configuration
 st.set_page_config(
-    page_title="Petition Trailer Generator",
+    page_title="Trailer: Supporter Videos",
     page_icon="🎬",
     layout="wide"
 )
@@ -35,33 +35,24 @@ if "reasoning" not in st.session_state:
 # Setup tabs
 tab1, tab2, tab3 = st.tabs(["Upload Videos", "Generate Trailer", "Stylize (Coming Soon)"])
 
-# API key management
+# API key management - using Streamlit secrets instead of UI inputs
 with tab1:
     st.title("Upload Videos for Petition Trailer")
     
-    # API Key inputs (sidebar to keep the main interface clean)
-    with st.sidebar:
-        st.header("API Keys")
-        openai_api_key = st.text_input("OpenAI API Key", type="password")
-        anthropic_api_key = st.text_input("Anthropic API Key", type="password")
-        
-        # Initialize API clients when keys are provided
+    # Initialize API clients using Streamlit secrets
+    try:
+        openai_client = OpenAI(api_key=st.secrets["openai"]["api_key"])
+        st.success("OpenAI client initialized")
+    except Exception as e:
+        st.error(f"Error initializing OpenAI client: {str(e)}")
         openai_client = None
+    
+    try:
+        anthropic_client = Anthropic(api_key=st.secrets["anthropic"]["api_key"])
+        st.success("Anthropic client initialized")
+    except Exception as e:
+        st.error(f"Error initializing Anthropic client: {str(e)}")
         anthropic_client = None
-        
-        if openai_api_key:
-            try:
-                openai_client = OpenAI(api_key=openai_api_key)
-                st.success("OpenAI client initialized")
-            except Exception as e:
-                st.error(f"Error initializing OpenAI client: {str(e)}")
-        
-        if anthropic_api_key:
-            try:
-                anthropic_client = Anthropic(api_key=anthropic_api_key)
-                st.success("Anthropic client initialized")
-            except Exception as e:
-                st.error(f"Error initializing Anthropic client: {str(e)}")
 
     # Create directories
     temp_dir = os.path.join(os.getcwd(), "temp")
@@ -78,7 +69,8 @@ with tab1:
     
     screenshot_dir = os.path.join(temp_dir, "screenshots")
     os.makedirs(screenshot_dir, exist_ok=True)
-    
+
+
     # Video upload functionality
     uploaded_files = st.file_uploader("Upload Video Files", type=["mp4", "mov", "avi"], accept_multiple_files=True)
     
@@ -166,7 +158,7 @@ with tab2:
         # Generate trailer button
         if st.button("Generate Trailer Plan"):
             if not anthropic_client:
-                st.error("Please enter your Anthropic API key in the sidebar to generate a trailer")
+                st.error("Missing Claude API key!")
             else:
                 with st.spinner("Generating trailer plan with Claude..."):
                     # Prepare data for Claude
