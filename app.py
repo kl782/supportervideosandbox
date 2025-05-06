@@ -130,7 +130,7 @@ def generate_trailer_plan(client, videos_data):
         Format the trailer plan as a structured list or JSON format that can be parsed by my application.
         """
         
-        # Call Claude API
+        # Call Claude API - updated to match current API structure
         response = client.messages.create(
             model="claude-3-7-sonnet-20250219",
             max_tokens=4000,
@@ -139,7 +139,7 @@ def generate_trailer_plan(client, videos_data):
             ]
         )
         
-        # Extract the content
+        # Extract the content from the response
         content = response.content[0].text
         
         # Split the response into reasoning and plan parts
@@ -157,7 +157,7 @@ def generate_trailer_plan(client, videos_data):
     except Exception as e:
         st.error(f"Error generating trailer plan: {str(e)}")
         return "Failed to generate trailer plan", f"Error: {str(e)}"
-
+        
 def create_trailer_segment(video_info, clip_info, output_dir, segment_id):
     """Create a segment for the trailer"""
     try:
