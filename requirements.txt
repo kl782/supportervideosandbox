@@ -1,7 +1,7 @@
 streamlit==1.32.0
 opencv-python-headless==4.11.0.86
 openai==1.5.0
-anthropic
+anthropic==0.8.1
 pillow==10.1.0
 numpy==1.26.2
 requests==2.31.0
