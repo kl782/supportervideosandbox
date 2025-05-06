@@ -106,7 +106,7 @@ def generate_trailer_plan(videos_data):
         
         # Prepare prompt for Claude
         prompt = f"""
-        Create a compelling trailer for the given Change.org petition.
+        Create a compelling, fact-driven trailer for the given Change.org petition for use on social media.
         
         PETITION TEXT:
         {petition_text}
@@ -119,13 +119,14 @@ def generate_trailer_plan(videos_data):
         Based on these videos and the petition text, I need you to:
         
         1. Analyze the content and determine the core message of the petition
-        2. Plan a 30-60 second trailer that effectively communicates this message
+        2. Plan a 30-60 second trailer that effectively communicates this message, which must contain:
+            a. A brief intro that orientates the reader to the petition's core concerns
+            b. Lead-ins that clearly contextualize the videos as coming from supporters of the petition
         3. Decide which video clips to use and in what order
         4. IMPORTANT: For each clip, specify:
            a. The video ID
            b. The exact start timestamp (in H:MM:SS format) from the transcript
            c. The exact end timestamp or duration
-           d. The text overlay content
         
         
         Your response should have two parts:
@@ -141,7 +142,6 @@ PART 2: A structured JSON trailer plan with segments array like this:
               "video_id": 2,
               "start_time": "0:01:24",
               "duration": 8,
-              "text": "Our community needs clean water"
             }},
             {{
               "type": "transition",
@@ -152,7 +152,7 @@ PART 2: A structured JSON trailer plan with segments array like this:
           ]
         }}
         
-        Make sure all video segments specify a valid video_id, start_time (in H:MM:SS format from transcript), duration (in seconds), and text overlay.
+        Make sure all video segments specify a valid video_id, start_time (in H:MM:SS format from transcript), and duration (in seconds).
         """
         
         
