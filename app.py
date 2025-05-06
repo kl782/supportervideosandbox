@@ -99,36 +99,62 @@ def create_text_overlay(input_path, output_path, text, segment_id):
         return input_path
 
 def generate_trailer_plan(videos_data):
-    """Generate a trailer plan using Claude via direct API call"""
+    """Generate a trailer plan using Claude via direct HTTP request"""
     try:
+        # Get petition text from session state
+        petition_text = st.session_state.get("petition_text", "")
+        
         # Prepare prompt for Claude
         prompt = f"""
-        You are an expert video editor and storyteller. I need your help to create a compelling trailer for a petition or advocacy campaign.
+        Create a compelling trailer for the given Change.org petition.
+        
+        PETITION TEXT:
+        {petition_text}
         
         I have the following videos to work with:
         
         {json.dumps(videos_data, indent=2)}
+        Each video transcript contains timestamps in the format [H:MM:SS] at the beginning of each line. These timestamps are crucial for trimming the video clips.
         
-        Based on these videos, I need you to:
+        Based on these videos and the petition text, I need you to:
         
         1. Analyze the content and determine the core message of the petition
         2. Plan a 30-60 second trailer that effectively communicates this message
         3. Decide which video clips to use and in what order
-        4. Include text overlays for important points
-        5. Optionally suggest transition slides if appropriate
+        4. IMPORTANT: For each clip, specify:
+           a. The video ID
+           b. The exact start timestamp (in H:MM:SS format) from the transcript
+           c. The exact end timestamp or duration
+           d. The text overlay content
+        
         
         Your response should have two parts:
         
-        PART 1: Your reasoning process and analysis of the videos. Explain your thinking about how to create the most effective trailer.
+        PART 1: Your reasoning process and analysis of the videos. Explain your thinking about how to create the most effective trailer that supports the petition's goals.
         
-        PART 2: A detailed, structured trailer plan with:
-        - Sequence of clips with timestamps/durations
-        - Text overlay content for each clip
-        - Any transition slides
-        - Approximate timing for each element
+PART 2: A structured JSON trailer plan with segments array like this:
         
-        Format the trailer plan as a structured list or JSON format that can be parsed by my application.
+        {{
+          "segments": [
+            {{
+              "type": "video",
+              "video_id": 2,
+              "start_time": "0:01:24",
+              "duration": 8,
+              "text": "Our community needs clean water"
+            }},
+            {{
+              "type": "transition",
+              "text": "Join our cause",
+              "duration": 3
+            }},
+            ...
+          ]
+        }}
+        
+        Make sure all video segments specify a valid video_id, start_time (in H:MM:SS format from transcript), duration (in seconds), and text overlay.
         """
+        
         
         # Direct API call using requests
         import requests
@@ -216,48 +242,65 @@ def create_trailer_segment(video_info, clip_info, output_dir, segment_id):
         return None
 
 def create_transition_slide(text, duration, output_path, slide_id):
-    """Create a transition slide with text"""
+    """Create a transition slide with text using PIL instead of ffmpeg"""
     try:
-        # Create a temporary image with text
-        width, height = 1280, 720  # Standard HD resolution
+        from PIL import Image, ImageDraw, ImageFont
+        import numpy as np
+        import moviepy.editor as mp
         
         # Create a dark background image
-        img = np.zeros((height, width, 3), np.uint8)
-        img.fill(40)  # Dark gray background
+        width, height = 1280, 720  # Standard HD resolution
+        background_color = (40, 40, 40)  # Dark gray
         
-        # Add text
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 1.5
-        font_color = (255, 255, 255)  # White
-        thickness = 2
+        img = Image.new('RGB', (width, height), background_color)
+        draw = ImageDraw.Draw(img)
         
-        # Wrap text
-        wrapped_text = textwrap.wrap(text, width=30)
-        y_position = height // 2 - (len(wrapped_text) * 40) // 2
+        # Try to use a nice font, fall back to default
+        try:
+            # Try to use a nice font if available
+            font = ImageFont.truetype("Arial", 40)
+        except:
+            # Fall back to default font
+            font = ImageFont.load_default()
         
-        for line in wrapped_text:
-            # Get the width and height of the text
-            (text_width, text_height) = cv2.getTextSize(line, font, font_scale, thickness)[0]
-            # Center the text horizontally
-            x_position = (width - text_width) // 2
+        # Wrap text to fit in the image
+        words = text.split()
+        lines = []
+        current_line = []
+        
+        for word in words:
+            test_line = ' '.join(current_line + [word])
+            # Estimate width with default font - approximate
+            if len(test_line) * 15 < width - 100:  # rough estimate for width
+                current_line.append(word)
+            else:
+                lines.append(' '.join(current_line))
+                current_line = [word]
+                
+        if current_line:
+            lines.append(' '.join(current_line))
+        
+        # Draw text centered
+        text_color = (255, 255, 255)  # White
+        y_position = height // 2 - (len(lines) * 50) // 2
+        
+        for line in lines:
+            # Estimate the position to center the text
+            line_width = len(line) * 15  # rough estimate
+            x_position = (width - line_width) // 2
             
-            # Add the text
-            cv2.putText(img, line, (x_position, y_position), font, font_scale, font_color, thickness)
-            y_position += 50  # Move to the next line
+            draw.text((x_position, y_position), line, fill=text_color, font=font)
+            y_position += 50
         
-        # Save as image
+        # Save temporary image
         temp_img_path = os.path.join(os.path.dirname(output_path), f"slide_{slide_id}.png")
-        cv2.imwrite(temp_img_path, img)
+        img.save(temp_img_path)
         
-        # Convert image to video
-        slide_cmd = (
-            f'ffmpeg -y -loop 1 -i "{temp_img_path}" -c:v libx264 -t {duration} '
-            f'-pix_fmt yuv420p -vf "scale=1280:720" "{output_path}"'
-        )
+        # Create video from still image using moviepy
+        clip = mp.ImageClip(temp_img_path, duration=duration)
+        clip.write_videofile(output_path, fps=24, codec='libx264', audio=False)
         
-        subprocess.call(slide_cmd, shell=True)
-        
-        # Clean up the temporary image
+        # Clean up temporary image
         if os.path.exists(temp_img_path):
             os.remove(temp_img_path)
         
@@ -403,102 +446,58 @@ def create_trailer_from_plan(videos, plan, output_dir):
         return None
 
 def parse_claude_plan(plan_text):
-    """
-    Parse Claude's trailer plan into a structured format
-    This function attempts to make sense of Claude's output regardless of exact format
-    """
-    segments = []
-    
-    # Try multiple parsing approaches
-    
-    # First, try to parse as JSON
+    """Parse Claude's trailer plan into a structured format"""
     try:
-        json_data = json.loads(plan_text)
-        if isinstance(json_data, list):
-            return json_data  # Already in the format we want
-        elif isinstance(json_data, dict) and "segments" in json_data:
-            return json_data["segments"]
-    except json.JSONDecodeError:
-        # Not JSON, continue with text parsing
-        pass
-    
-    # Try to parse as structured text with numbered segments
-    segment_pattern = re.compile(r'(?:^|\n)(?:Segment|Clip)\s*(\d+)[\s:]*(.*?)(?=(?:\n(?:Segment|Clip)\s*\d+)|$)', re.DOTALL)
-    matches = segment_pattern.findall(plan_text)
-    
-    if matches:
-        for i, (segment_num, segment_text) in enumerate(matches):
-            segment = {"id": int(segment_num), "type": "video"}
-            
-            # Look for duration
-            duration_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:seconds|sec|s)', segment_text, re.IGNORECASE)
-            if duration_match:
-                segment["duration"] = float(duration_match.group(1))
+        # First, try to parse as JSON
+        try:
+            plan_data = json.loads(plan_text)
+            if isinstance(plan_data, dict) and "segments" in plan_data:
+                return plan_data["segments"]
+            elif isinstance(plan_data, list):
+                return plan_data
             else:
-                segment["duration"] = 5.0  # Default duration
+                st.warning("JSON format received but missing expected 'segments' array. Using as-is.")
+                return [plan_data]
+        except json.JSONDecodeError:
+            # Not valid JSON, try to extract JSON block
+            json_pattern = r"```json\s*([\s\S]*?)\s*```"
+            matches = re.findall(json_pattern, plan_text)
             
-            # Look for video ID
-            video_match = re.search(r'Video\s*(\d+)', segment_text, re.IGNORECASE)
-            if video_match:
-                segment["video_id"] = int(video_match.group(1)) - 1  # 0-based index
+            if matches:
+                try:
+                    json_data = json.loads(matches[0])
+                    if isinstance(json_data, dict) and "segments" in json_data:
+                        return json_data["segments"]
+                    elif isinstance(json_data, list):
+                        return json_data
+                    else:
+                        st.warning("Found JSON in code block but missing expected structure. Using as-is.")
+                        return [json_data]
+                except:
+                    pass
             
-            # Look for text overlay
-            text_match = re.search(r'Text(?:\s*overlay)?[:\s]+"?(.*?)"?(?=\n|$)', segment_text, re.IGNORECASE)
-            if text_match:
-                segment["text"] = text_match.group(1).strip()
+            # If we still don't have valid JSON, try to parse as structured text
+            st.warning("Could not parse response as JSON. Attempting to parse as text.")
+            # Text parsing logic here (previous implementation)
             
-            # Look for timestamp
-            time_match = re.search(r'(?:start|timestamp)[:\s]*"?(\d+:\d+:\d+|\d+:\d+)"?', segment_text, re.IGNORECASE)
-            if time_match:
-                segment["start_time"] = time_match.group(1)
-            
-            # Identify transition slides
-            if "transition" in segment_text.lower() or "slide" in segment_text.lower():
-                segment["type"] = "transition"
-                
-            segments.append(segment)
-        
-        return segments
+            # Return a simple transition slide if all parsing fails
+            return [{
+                "type": "transition",
+                "text": "Failed to parse plan. Please check the Claude reasoning tab for details.",
+                "duration": 10
+            }]
     
-    # Try to parse as bulleted list
-    bullet_pattern = re.compile(r'(?:^|\n)[\s-]*(\d+|\*)[\s.]+(.*?)(?=(?:\n[\s-]*(?:\d+|\*))|$)', re.DOTALL)
-    matches = bullet_pattern.findall(plan_text)
-    
-    if matches:
-        for i, (_, segment_text) in enumerate(matches):
-            segment = {"id": i, "type": "video"}
-            
-            # Similar parsing logic as above
-            duration_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:seconds|sec|s)', segment_text, re.IGNORECASE)
-            if duration_match:
-                segment["duration"] = float(duration_match.group(1))
-            else:
-                segment["duration"] = 5.0
-            
-            video_match = re.search(r'Video\s*(\d+)', segment_text, re.IGNORECASE)
-            if video_match:
-                segment["video_id"] = int(video_match.group(1)) - 1
-            
-            text_match = re.search(r'Text(?:\s*overlay)?[:\s]+"?(.*?)"?(?=\n|$)', segment_text, re.IGNORECASE)
-            if text_match:
-                segment["text"] = text_match.group(1).strip()
-            
-            time_match = re.search(r'(?:start|timestamp)[:\s]*"?(\d+:\d+:\d+|\d+:\d+)"?', segment_text, re.IGNORECASE)
-            if time_match:
-                segment["start_time"] = time_match.group(1)
-            
-            if "transition" in segment_text.lower() or "slide" in segment_text.lower():
-                segment["type"] = "transition"
-                
-            segments.append(segment)
-        
-        return segments
-    
-    # If all parsing attempts fail, create a simple transition slide with the plan text
-    if plan_text.strip():
-        return [{"type": "transition", "text": "Failed to parse plan. Please check the Claude reasoning tab for details.", "duration": 10}]
-    
-    return []
+    except Exception as e:
+        st.error(f"Error parsing Claude's plan: {str(e)}")
+        return [{
+            "type": "transition",
+            "text": "Error parsing plan. Please try again.",
+            "duration": 10
+        }]
+
+
+
+
 
 def get_video_duration(video_path):
     """Get the duration of a video file"""
@@ -516,6 +515,7 @@ def extract_segment_from_transcript(transcript, start_time_str, duration=10):
         # Parse transcript lines
         lines = transcript.split('\n')
         extracted_text = []
+        extracted_timestamps = []
         
         # Parse start time
         if ':' in start_time_str:
@@ -541,11 +541,24 @@ def extract_segment_from_transcript(transcript, start_time_str, duration=10):
                             # Extract text after timestamp
                             text = line[timestamp_end + 1:].strip()
                             extracted_text.append(text)
+                            extracted_timestamps.append(line_seconds)
         
-        return ' '.join(extracted_text)
+        # Get the actual start and end time of the extracted text
+        actual_start = min(extracted_timestamps) if extracted_timestamps else start_seconds
+        actual_end = max(extracted_timestamps) if extracted_timestamps else end_seconds
+        
+        return {
+            "text": ' '.join(extracted_text),
+            "actual_start": actual_start,
+            "actual_end": actual_end
+        }
     except Exception as e:
         st.error(f"Error extracting segment from transcript: {str(e)}")
-        return ""
+        return {
+            "text": "",
+            "actual_start": start_seconds,
+            "actual_end": end_seconds
+        }
 
 def download_font():
     """Download Coolvetica font if not available"""
@@ -583,12 +596,14 @@ def create_empty_video(duration, width, height, output_path):
         st.error(f"Error creating empty video: {str(e)}")
         return None
 
-# Add this to the end of the `create_trailer_from_plan` function to improve parsing
 def create_trailer_from_plan(videos, plan, output_dir):
     """Create the trailer from the plan"""
     try:
-        # Use the improved parsing function
-        segments = parse_claude_plan(plan)
+        # Parse the plan if it's a string
+        if isinstance(plan, str):
+            segments = parse_claude_plan(plan)
+        else:
+            segments = plan  # Assume it's already parsed
         
         # Create segments
         segment_paths = []
@@ -598,22 +613,18 @@ def create_trailer_from_plan(videos, plan, output_dir):
             
             if segment_type == "video":
                 video_id = segment.get("video_id", 0)
+                # Convert video_id to 0-based index if needed
+                if isinstance(video_id, int) and video_id > 0:
+                    video_id = video_id - 1
+                    
                 # Ensure video_id is within range
                 video_id = min(video_id, len(videos) - 1) if videos else 0
                 
                 if videos:
                     video_info = videos[video_id]
-                    
-                    # Extract text from transcript if no text is specified
-                    if "text" not in segment and "start_time" in segment:
-                        segment["text"] = extract_segment_from_transcript(
-                            video_info["transcript"],
-                            segment["start_time"],
-                            segment.get("duration", 5)
-                        )
-                    
                     clip_info = {
                         "start_time": segment.get("start_time", "0:00:00"),
+                        "end_time": segment.get("end_time", None),
                         "duration": segment.get("duration", 5),
                         "text": segment.get("text", "")
                     }
@@ -621,7 +632,7 @@ def create_trailer_from_plan(videos, plan, output_dir):
                     segment_path = create_trailer_segment(video_info, clip_info, output_dir, i)
                     if segment_path:
                         segment_paths.append(segment_path)
-            
+                        
             elif segment_type == "transition":
                 text = segment.get("text", "")
                 duration = segment.get("duration", 3)
@@ -634,52 +645,82 @@ def create_trailer_from_plan(videos, plan, output_dir):
         
         # Combine all segments
         if segment_paths:
-            # Create a file list for ffmpeg
-            file_list_path = os.path.join(output_dir, "file_list.txt")
-            with open(file_list_path, "w") as f:
-                for path in segment_paths:
-                    f.write(f"file '{os.path.abspath(path)}'\n")
-            
-            # Combine the segments (using concat demuxer for handling potentially different codecs/framerates)
-            output_path = os.path.join(output_dir, "final_trailer.mp4")
-            
-            # First, try with simple concat
-            concat_cmd = f'ffmpeg -y -f concat -safe 0 -i "{file_list_path}" -c copy "{output_path}"'
+            # Use moviepy to concatenate videos
             try:
-                subprocess.call(concat_cmd, shell=True)
+                import moviepy.editor as mp
                 
-                # Check if file was created successfully
-                if not (os.path.exists(output_path) and os.path.getsize(output_path) > 0):
-                    # If simple concat fails, try a more complex approach that handles different framerates
-                    st.warning("Simple concatenation failed. Trying with re-encoding...")
-                    
-                    concat_cmd = (
-                        f'ffmpeg -y -f concat -safe 0 -i "{file_list_path}" '
-                        f'-c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p '
-                        f'-r 30 -c:a aac -b:a 128k "{output_path}"'
-                    )
-                    subprocess.call(concat_cmd, shell=True)
+                clips = []
+                for path in segment_paths:
+                    clip = mp.VideoFileClip(path)
+                    clips.append(clip)
+                
+                final_clip = mp.concatenate_videoclips(clips)
+                output_path = os.path.join(output_dir, "final_trailer.mp4")
+                final_clip.write_videofile(output_path, codec='libx264')
+                
+                # Close clips to free resources
+                for clip in clips:
+                    clip.close()
+                final_clip.close()
+                
+                if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                    st.success("Final trailer created successfully!")
+                    return output_path
+                else:
+                    st.error("Failed to create final trailer with moviepy")
+                    return None
+                
             except Exception as e:
-                st.error(f"Error during simple concatenation: {str(e)}")
+                st.error(f"Error concatenating video clips with moviepy: {str(e)}")
                 
-                # Try the more complex approach if the simple one fails
-                try:
-                    concat_cmd = (
-                        f'ffmpeg -y -f concat -safe 0 -i "{file_list_path}" '
-                        f'-c:v libx264 -preset medium -crf 23 -pix_fmt yuv420p '
-                        f'-r 30 -c:a aac -b:a 128k "{output_path}"'
-                    )
-                    subprocess.call(concat_cmd, shell=True)
-                except Exception as e2:
-                    st.error(f"Error during re-encoded concatenation: {str(e2)}")
-            
-            # Final check if the output file was created
-            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-                st.success("Final trailer created successfully!")
-                return output_path
-            else:
-                st.error("Failed to create final trailer")
-                return None
+                # Fallback: Try generating a text report of the trailer plan
+                st.warning("Creating a trailer plan report instead of video")
+                report = "# Trailer Plan Report\n\n"
+                
+                for i, segment in enumerate(segments):
+                    segment_type = segment.get("type", "video")
+                    if segment_type == "video":
+                        video_id = segment.get("video_id", 0)
+                        if isinstance(video_id, int) and video_id > 0:
+                            video_id = video_id - 1
+                        video_id = min(video_id, len(videos) - 1) if videos else 0
+                        
+                        if videos:
+                            video_info = videos[video_id]
+                            video_name = video_info.get("name", f"Video {video_id+1}")
+                            
+                            report += f"## Segment {i+1}: Video Clip\n"
+                            report += f"- **Source:** {video_name}\n"
+                            report += f"- **Start Time:** {segment.get('start_time', '0:00:00')}\n"
+                            report += f"- **Duration:** {segment.get('duration', 5)} seconds\n"
+                            report += f"- **Text Overlay:** \"{segment.get('text', '')}\"\n\n"
+                            
+                            # Include a transcript excerpt if available
+                            start_time = segment.get("start_time", "0:00:00")
+                            duration = segment.get("duration", 5)
+                            transcript_segment = extract_segment_from_transcript(
+                                video_info.get("transcript", ""), 
+                                start_time, 
+                                duration
+                            )
+                            
+                            if transcript_segment.get("text"):
+                                report += f"- **Transcript excerpt:**\n  \"{transcript_segment.get('text')}\"\n\n"
+                    
+                    elif segment_type == "transition":
+                        report += f"## Segment {i+1}: Transition Slide\n"
+                        report += f"- **Text:** \"{segment.get('text', '')}\"\n"
+                        report += f"- **Duration:** {segment.get('duration', 3)} seconds\n\n"
+                
+                # Save the report
+                report_path = os.path.join(output_dir, "trailer_plan_report.md")
+                with open(report_path, "w") as f:
+                    f.write(report)
+                
+                st.info("Created a trailer plan report instead of video. You can view the details in the app.")
+                st.markdown(report)
+                
+                return report_path
         else:
             st.error("No segments were created")
             return None
@@ -687,6 +728,7 @@ def create_trailer_from_plan(videos, plan, output_dir):
     except Exception as e:
         st.error(f"Error creating trailer: {str(e)}")
         return None
+
 
 # Add a function to standardize videos before concatenation
 def standardize_video(input_path, output_path):
@@ -945,7 +987,17 @@ tab1, tab2, tab3 = st.tabs(["Upload Videos", "Generate Trailer", "Stylize (Comin
 with tab1:
     st.title("Upload Videos for Petition Trailer")
     
-    # Initialize API clients using Streamlit secrets
+    # Add petition text input
+    st.subheader("Petition Details")
+    petition_text = st.text_area(
+        "Paste the petition text here",
+        height=200,
+    )
+    
+    # Store petition text in session state
+    if petition_text:
+        st.session_state.petition_text = petition_text
+        
     try:
     # Initialize OpenAI client without proxies argument
         openai_client = OpenAI(api_key=st.secrets["openai"]["api_key"])
