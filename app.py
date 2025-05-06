@@ -41,6 +41,7 @@ with tab1:
     
     # Initialize API clients using Streamlit secrets
     try:
+    # Initialize OpenAI client without proxies argument
         openai_client = OpenAI(api_key=st.secrets["openai"]["api_key"])
         st.success("OpenAI client initialized")
     except Exception as e:
@@ -48,6 +49,7 @@ with tab1:
         openai_client = None
     
     try:
+        # Initialize Anthropic client without proxies argument
         anthropic_client = Anthropic(api_key=st.secrets["anthropic"]["api_key"])
         st.success("Anthropic client initialized")
     except Exception as e:
