@@ -1164,25 +1164,25 @@ with tab1:
             st.write(st.session_state.trailer_plan)
             
             # Execute trailer generation
-            if st.button("Create Trailer"):
-                with st.spinner("Creating trailer..."):
-                    result = create_trailer_from_plan(
-                        st.session_state.processed_videos,
-                        st.session_state.trailer_plan,
-                        output_dir
-                    )
+            #if st.button("Create Trailer"):
+             #   with st.spinner("Creating trailer..."):
+              #      result = create_trailer_from_plan(
+               #         st.session_state.processed_videos,
+                #        st.session_state.trailer_plan,
+                 #       output_dir
+                  #  )
                     
-                    if result:
-                        st.success("Trailer created successfully!")
-                        st.video(result)
-                    else:
-                        st.error("Failed to create trailer")
+                   # if result:
+                    #    st.success("Trailer created successfully!")
+                     #   st.video(result)
+                 #   else:
+                  #      st.error("Failed to create trailer")
 
 # Stylization tab (placeholder for future development)
 with tab3:
     st.title("Stylize Your Trailer (Coming Soon)")
-    st.info("This feature will allow you to stylize your trailer with Canva templates and background music.")
-    st.warning("This feature is under development and will be available soon.")
+    st.info("After creating an AI-generated plan, the idea is for it to become possible to add stylistic components atop the raw plan")
+    st.warning("In progress")
 
 
 # Main app execution starts here
