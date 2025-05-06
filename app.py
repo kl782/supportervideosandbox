@@ -15,360 +15,6 @@ import numpy as np
 import time
 from pathlib import Path
 
-# Set page configuration
-st.set_page_config(
-    page_title="Trailer: Supporter Videos",
-    page_icon="🎬",
-    layout="wide"
-)
-
-# Initialize session state variables
-if "processed_videos" not in st.session_state:
-    st.session_state.processed_videos = []
-if "scene_timestamps" not in st.session_state:
-    st.session_state.scene_timestamps = {}
-if "trailer_plan" not in st.session_state:
-    st.session_state.trailer_plan = None
-if "reasoning" not in st.session_state:
-    st.session_state.reasoning = None
-
-# Setup tabs
-tab1, tab2, tab3 = st.tabs(["Upload Videos", "Generate Trailer", "Stylize (Coming Soon)"])
-
-# API key management - using Streamlit secrets instead of UI inputs
-with tab1:
-    st.title("Upload Videos for Petition Trailer")
-    
-    # Initialize API clients using Streamlit secrets
-    try:
-    # Initialize OpenAI client without proxies argument
-        openai_client = OpenAI(api_key=st.secrets["openai"]["api_key"])
-        st.success("OpenAI client initialized")
-    except Exception as e:
-        st.error(f"Error initializing OpenAI client: {str(e)}")
-        openai_client = None
-    
-    try:
-        # Initialize Anthropic client without proxies argument
-        anthropic_client = Anthropic(api_key=st.secrets["anthropic"]["api_key"])
-        st.success("Anthropic client initialized")
-    except Exception as e:
-        st.error(f"Error initializing Anthropic client: {str(e)}")
-        anthropic_client = None
-
-    # Create directories
-    temp_dir = os.path.join(os.getcwd(), "temp")
-    os.makedirs(temp_dir, exist_ok=True)
-    
-    output_dir = os.path.join(temp_dir, "output")
-    os.makedirs(output_dir, exist_ok=True)
-    
-    audio_dir = os.path.join(temp_dir, "audio")
-    os.makedirs(audio_dir, exist_ok=True)
-    
-    transcript_dir = os.path.join(temp_dir, "transcripts")
-    os.makedirs(transcript_dir, exist_ok=True)
-    
-    screenshot_dir = os.path.join(temp_dir, "screenshots")
-    os.makedirs(screenshot_dir, exist_ok=True)
-
-
-    # Video upload functionality
-    uploaded_files = st.file_uploader("Upload Video Files", type=["mp4", "mov", "avi"], accept_multiple_files=True)
-    
-    if uploaded_files:
-        st.write("Uploaded Videos:")
-        
-        for uploaded_file in uploaded_files:
-            # Save uploaded file to disk
-            video_path = os.path.join(temp_dir, uploaded_file.name)
-            with open(video_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            
-            # Display video info
-            st.video(video_path)
-            
-            # Process button for each video
-            if st.button(f"Process {uploaded_file.name}", key=f"process_{uploaded_file.name}"):
-                if not openai_client:
-                    st.error("Please enter your OpenAI API key in the sidebar to process videos")
-                    continue
-                
-                with st.spinner(f"Processing {uploaded_file.name}..."):
-                    # Step 1: Extract audio
-                    st.info("Extracting audio...")
-                    audio_path = extract_audio_from_video(video_path, audio_dir)
-                    
-                    if not audio_path:
-                        st.error(f"Failed to extract audio from {uploaded_file.name}")
-                        continue
-                    
-                    # Step 2: Transcribe audio
-                    st.info("Transcribing audio...")
-                    transcript = transcribe_audio(openai_client, audio_path)
-                    
-                    if not transcript:
-                        st.error(f"Failed to transcribe audio from {uploaded_file.name}")
-                        continue
-                    
-                    # Save transcription
-                    basename = os.path.splitext(uploaded_file.name)[0]
-                    transcript_path = save_transcription(transcript, transcript_dir, basename)
-                    
-                    # Step 3: Capture first frame
-                    st.info("Capturing screenshot...")
-                    screenshot_path = capture_first_frame(video_path, screenshot_dir)
-                    
-                    if not screenshot_path:
-                        st.error(f"Failed to capture screenshot from {uploaded_file.name}")
-                        continue
-                    
-                    # Step 4: Analyze video content
-                    st.info("Analyzing video content...")
-                    video_analysis = analyze_video_content(openai_client, video_path, screenshot_path, transcript)
-                    
-                    # Add processed video to session state
-                    st.session_state.processed_videos.append({
-                        "name": uploaded_file.name,
-                        "path": video_path,
-                        "transcript": transcript,
-                        "screenshot": screenshot_path,
-                        "analysis": video_analysis
-                    })
-                    
-                    st.success(f"Processed {uploaded_file.name} successfully!")
-                    st.json(video_analysis)
-
-# Trailer generation tab
-with tab2:
-    st.title("Generate Petition Trailer")
-    
-    if not st.session_state.processed_videos:
-        st.warning("Please upload and process videos in the Upload tab first")
-    else:
-        # Display processed videos
-        st.subheader("Processed Videos")
-        for i, video in enumerate(st.session_state.processed_videos):
-            with st.expander(f"Video {i+1}: {video['name']}"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.image(video["screenshot"], caption=f"Screenshot from {video['name']}")
-                with col2:
-                    st.json(video["analysis"])
-                st.text_area("Transcript", video["transcript"], height=150)
-        
-        # Generate trailer button
-        if st.button("Generate Trailer Plan"):
-            if not anthropic_client:
-                st.error("Missing Claude API key!")
-            else:
-                with st.spinner("Generating trailer plan with Claude..."):
-                    # Prepare data for Claude
-                    videos_data = []
-                    for i, video in enumerate(st.session_state.processed_videos):
-                        videos_data.append({
-                            "id": i+1,
-                            "name": video["name"],
-                            "transcript": video["transcript"],
-                            "analysis": video["analysis"]
-                        })
-                    
-                    # Call Claude to generate a trailer plan
-                    trailer_plan, reasoning = generate_trailer_plan(anthropic_client, videos_data)
-                    
-                    # Store in session state
-                    st.session_state.trailer_plan = trailer_plan
-                    st.session_state.reasoning = reasoning
-        
-        # Display the trailer plan if available
-        if st.session_state.trailer_plan:
-            st.subheader("Claude's Reasoning")
-            st.write(st.session_state.reasoning)
-            
-            st.subheader("Trailer Plan")
-            st.write(st.session_state.trailer_plan)
-            
-            # Execute trailer generation
-            if st.button("Create Trailer"):
-                with st.spinner("Creating trailer..."):
-                    result = create_trailer_from_plan(
-                        st.session_state.processed_videos,
-                        st.session_state.trailer_plan,
-                        output_dir
-                    )
-                    
-                    if result:
-                        st.success("Trailer created successfully!")
-                        st.video(result)
-                    else:
-                        st.error("Failed to create trailer")
-
-# Stylization tab (placeholder for future development)
-with tab3:
-    st.title("Stylize Your Trailer (Coming Soon)")
-    st.info("This feature will allow you to stylize your trailer with Canva templates and background music.")
-    st.warning("This feature is under development and will be available soon.")
-
-# Helper functions
-def extract_audio_from_video(video_path, output_dir):
-    """Extract audio from video file"""
-    filename = os.path.basename(video_path)
-    basename = os.path.splitext(filename)[0]
-    audio_path = os.path.join(output_dir, f"{basename}.mp3")
-    try:
-        cmd = f'ffmpeg -y -i "{video_path}" -q:a 0 -map a "{audio_path}"'
-        subprocess.run(cmd, shell=True, check=True)
-        if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
-            return audio_path
-        else:
-            st.error(f"Failed to extract audio from {filename}")
-            return None
-    except Exception as e:
-        st.error(f"Error extracting audio from {filename}: {str(e)}")
-        return None
-
-def transcribe_audio(client, file_path):
-    """Transcribe audio using OpenAI's transcription service"""
-    with open(file_path, "rb") as audio_file:
-        transcription = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=audio_file,
-            response_format="srt"
-        )
-    # Pass the transcription directly for processing
-    return process_transcription(transcription)
-
-def process_transcription(transcription):
-    """Process the raw transcription into the desired format"""
-    blocks = transcription.split('\n\n')
-    processed_lines = []
-    for block in blocks:
-        lines = block.split('\n')
-        if len(lines) >= 3:
-            time_range = lines[1]
-            text = lines[2]
-            start_time = time_range.split(' --> ')[0]
-            # Convert the time format from "00:00:00,000" to "0:00:00"
-            formatted_start_time = format_time(start_time)
-            processed_line = f"[{formatted_start_time}]{text}"
-            processed_lines.append(processed_line)
-    return '\n'.join(processed_lines)
-
-def format_time(time_str):
-    """Format time from "00:00:00,000" to "0:00:00" """
-    parts = time_str.split(',')[0].split(':')
-    return f"{int(parts[0])}:{parts[1]}:{parts[2]}"
-
-def save_transcription(transcript, output_dir, basename):
-    """Save transcription to a file"""
-    transcript_path = os.path.join(output_dir, f"{basename}.srt")
-    with open(transcript_path, 'w') as f:
-        f.write(transcript)
-    return transcript_path
-
-def capture_first_frame(video_path, output_dir):
-    """Capture first frame of video as screenshot"""
-    filename = os.path.basename(video_path)
-    basename = os.path.splitext(filename)[0]
-    screenshot_path = os.path.join(output_dir, f"{basename}.png")
-    try:
-        cap = cv2.VideoCapture(video_path)
-        ret, frame = cap.read()
-        if ret:
-            cv2.imwrite(screenshot_path, frame)
-            cap.release()
-            return screenshot_path
-        else:
-            st.error(f"Failed to capture first frame from {filename}")
-            cap.release()
-            return None
-    except Exception as e:
-        st.error(f"Error capturing first frame from {filename}: {str(e)}")
-        return None
-
-def analyze_video_content(client, video_path, screenshot_path, transcript):
-    """Analyze video content using OpenAI GPT-4o vision and transcript"""
-    try:
-        # Encode the screenshot
-        with open(screenshot_path, "rb") as img_file:
-            encoded_image = base64.b64encode(img_file.read()).decode('utf-8')
-            
-        prompt = f"""
-        Analyze this video based on its first frame and transcript.
-        
-        Transcript:
-        {transcript}
-        
-        Please provide the following information:
-        1. Who is speaking (if anyone)?
-        2. What is the main message or topic?
-        3. How does this relate to a petition or advocacy campaign?
-        4. What demographic information can you observe about any people in the frame?
-        5. Is this a news report, personal testimony, or something else?
-        
-        Format your response as JSON:
-        {{
-          "speaker_type": "supporter", "news_reporter", "other", or "none",
-          "main_message": "Summary of the main point being made",
-          "petition_relevance": "How this relates to advocacy",
-          "demographic_notes": "Demographics of people shown (if any)",
-          "content_type": "testimony", "news", "interview", or other appropriate category
-        }}
-        """
-        
-        response = client.chat.completions.create(
-            model="gpt-4o",  # Updated to use gpt-4o
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{encoded_image}"
-                            }
-                        }
-                    ]
-                }
-            ],
-            max_tokens=1000,
-            response_format={"type": "json_object"}
-        )
-        
-        # Validate response before parsing JSON
-        if (response and hasattr(response, 'choices') and 
-            len(response.choices) > 0 and 
-            hasattr(response.choices[0], 'message') and 
-            hasattr(response.choices[0].message, 'content') and
-            response.choices[0].message.content):
-            
-            try:
-                return json.loads(response.choices[0].message.content)
-            except json.JSONDecodeError as json_err:
-                st.error(f"Invalid JSON in API response: {str(json_err)}")
-        else:
-            st.error("Empty or invalid response from OpenAI API")
-        
-        # Return default object if any validation fails
-        return {
-            "speaker_type": "unknown",
-            "main_message": "Video analysis unavailable",
-            "petition_relevance": "unknown",
-            "demographic_notes": "unknown",
-            "content_type": "unknown"
-        }
-    
-    except Exception as e:
-        st.error(f"Error analyzing video content: {str(e)}")
-        return {
-            "speaker_type": "unknown",
-            "main_message": "Error analyzing content",
-            "petition_relevance": "unknown",
-            "demographic_notes": "unknown",
-            "content_type": "unknown"
-        }
-
 def create_text_overlay(input_path, output_path, text, segment_id):
     """ Create a text overlay with font size proportional to video dimensions """
     try:
@@ -1062,6 +708,360 @@ def create_fade_transition(duration, output_path):
     except Exception as e:
         st.error(f"Error creating fade transition: {str(e)}")
         return None
+        
+def extract_audio_from_video(video_path, output_dir):
+    """Extract audio from video file"""
+    filename = os.path.basename(video_path)
+    basename = os.path.splitext(filename)[0]
+    audio_path = os.path.join(output_dir, f"{basename}.mp3")
+    try:
+        cmd = f'ffmpeg -y -i "{video_path}" -q:a 0 -map a "{audio_path}"'
+        subprocess.run(cmd, shell=True, check=True)
+        if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+            return audio_path
+        else:
+            st.error(f"Failed to extract audio from {filename}")
+            return None
+    except Exception as e:
+        st.error(f"Error extracting audio from {filename}: {str(e)}")
+        return None
+
+def transcribe_audio(client, file_path):
+    """Transcribe audio using OpenAI's transcription service"""
+    with open(file_path, "rb") as audio_file:
+        transcription = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_file,
+            response_format="srt"
+        )
+    # Pass the transcription directly for processing
+    return process_transcription(transcription)
+
+def process_transcription(transcription):
+    """Process the raw transcription into the desired format"""
+    blocks = transcription.split('\n\n')
+    processed_lines = []
+    for block in blocks:
+        lines = block.split('\n')
+        if len(lines) >= 3:
+            time_range = lines[1]
+            text = lines[2]
+            start_time = time_range.split(' --> ')[0]
+            # Convert the time format from "00:00:00,000" to "0:00:00"
+            formatted_start_time = format_time(start_time)
+            processed_line = f"[{formatted_start_time}]{text}"
+            processed_lines.append(processed_line)
+    return '\n'.join(processed_lines)
+
+def format_time(time_str):
+    """Format time from "00:00:00,000" to "0:00:00" """
+    parts = time_str.split(',')[0].split(':')
+    return f"{int(parts[0])}:{parts[1]}:{parts[2]}"
+
+def save_transcription(transcript, output_dir, basename):
+    """Save transcription to a file"""
+    transcript_path = os.path.join(output_dir, f"{basename}.srt")
+    with open(transcript_path, 'w') as f:
+        f.write(transcript)
+    return transcript_path
+
+def capture_first_frame(video_path, output_dir):
+    """Capture first frame of video as screenshot"""
+    filename = os.path.basename(video_path)
+    basename = os.path.splitext(filename)[0]
+    screenshot_path = os.path.join(output_dir, f"{basename}.png")
+    try:
+        cap = cv2.VideoCapture(video_path)
+        ret, frame = cap.read()
+        if ret:
+            cv2.imwrite(screenshot_path, frame)
+            cap.release()
+            return screenshot_path
+        else:
+            st.error(f"Failed to capture first frame from {filename}")
+            cap.release()
+            return None
+    except Exception as e:
+        st.error(f"Error capturing first frame from {filename}: {str(e)}")
+        return None
+
+def analyze_video_content(client, video_path, screenshot_path, transcript):
+    """Analyze video content using OpenAI GPT-4o vision and transcript"""
+    try:
+        # Encode the screenshot
+        with open(screenshot_path, "rb") as img_file:
+            encoded_image = base64.b64encode(img_file.read()).decode('utf-8')
+            
+        prompt = f"""
+        Analyze this video based on its first frame and transcript.
+        
+        Transcript:
+        {transcript}
+        
+        Please provide the following information:
+        1. Who is speaking (if anyone)?
+        2. What is the main message or topic?
+        3. How does this relate to a petition or advocacy campaign?
+        4. What demographic information can you observe about any people in the frame?
+        5. Is this a news report, personal testimony, or something else?
+        
+        Format your response as JSON:
+        {{
+          "speaker_type": "supporter", "news_reporter", "other", or "none",
+          "main_message": "Summary of the main point being made",
+          "petition_relevance": "How this relates to advocacy",
+          "demographic_notes": "Demographics of people shown (if any)",
+          "content_type": "testimony", "news", "interview", or other appropriate category
+        }}
+        """
+        
+        response = client.chat.completions.create(
+            model="gpt-4o",  # Updated to use gpt-4o
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{encoded_image}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=1000,
+            response_format={"type": "json_object"}
+        )
+        
+        # Validate response before parsing JSON
+        if (response and hasattr(response, 'choices') and 
+            len(response.choices) > 0 and 
+            hasattr(response.choices[0], 'message') and 
+            hasattr(response.choices[0].message, 'content') and
+            response.choices[0].message.content):
+            
+            try:
+                return json.loads(response.choices[0].message.content)
+            except json.JSONDecodeError as json_err:
+                st.error(f"Invalid JSON in API response: {str(json_err)}")
+        else:
+            st.error("Empty or invalid response from OpenAI API")
+        
+        # Return default object if any validation fails
+        return {
+            "speaker_type": "unknown",
+            "main_message": "Video analysis unavailable",
+            "petition_relevance": "unknown",
+            "demographic_notes": "unknown",
+            "content_type": "unknown"
+        }
+    
+    except Exception as e:
+        st.error(f"Error analyzing video content: {str(e)}")
+        return {
+            "speaker_type": "unknown",
+            "main_message": "Error analyzing content",
+            "petition_relevance": "unknown",
+            "demographic_notes": "unknown",
+            "content_type": "unknown"
+        }
+
+# Set page configuration
+st.set_page_config(
+    page_title="Trailer: Supporter Videos",
+    page_icon="🎬",
+    layout="wide"
+)
+
+# Initialize session state variables
+if "processed_videos" not in st.session_state:
+    st.session_state.processed_videos = []
+if "scene_timestamps" not in st.session_state:
+    st.session_state.scene_timestamps = {}
+if "trailer_plan" not in st.session_state:
+    st.session_state.trailer_plan = None
+if "reasoning" not in st.session_state:
+    st.session_state.reasoning = None
+
+# Setup tabs
+tab1, tab2, tab3 = st.tabs(["Upload Videos", "Generate Trailer", "Stylize (Coming Soon)"])
+
+# API key management - using Streamlit secrets instead of UI inputs
+with tab1:
+    st.title("Upload Videos for Petition Trailer")
+    
+    # Initialize API clients using Streamlit secrets
+    try:
+    # Initialize OpenAI client without proxies argument
+        openai_client = OpenAI(api_key=st.secrets["openai"]["api_key"])
+        st.success("OpenAI client initialized")
+    except Exception as e:
+        st.error(f"Error initializing OpenAI client: {str(e)}")
+        openai_client = None
+    
+    try:
+        # Initialize Anthropic client without proxies argument
+        anthropic_client = Anthropic(api_key=st.secrets["anthropic"]["api_key"])
+        st.success("Anthropic client initialized")
+    except Exception as e:
+        st.error(f"Error initializing Anthropic client: {str(e)}")
+        anthropic_client = None
+
+    # Create directories
+    temp_dir = os.path.join(os.getcwd(), "temp")
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    output_dir = os.path.join(temp_dir, "output")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    audio_dir = os.path.join(temp_dir, "audio")
+    os.makedirs(audio_dir, exist_ok=True)
+    
+    transcript_dir = os.path.join(temp_dir, "transcripts")
+    os.makedirs(transcript_dir, exist_ok=True)
+    
+    screenshot_dir = os.path.join(temp_dir, "screenshots")
+    os.makedirs(screenshot_dir, exist_ok=True)
+
+
+    # Video upload functionality
+    uploaded_files = st.file_uploader("Upload Video Files", type=["mp4", "mov", "avi"], accept_multiple_files=True)
+    
+    if uploaded_files:
+        st.write("Uploaded Videos:")
+        
+        for uploaded_file in uploaded_files:
+            # Save uploaded file to disk
+            video_path = os.path.join(temp_dir, uploaded_file.name)
+            with open(video_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            
+            # Display video info
+            st.video(video_path)
+            
+            # Process button for each video
+            if st.button(f"Process {uploaded_file.name}", key=f"process_{uploaded_file.name}"):
+                if not openai_client:
+                    st.error("Please enter your OpenAI API key in the sidebar to process videos")
+                    continue
+                
+                with st.spinner(f"Processing {uploaded_file.name}..."):
+                    # Step 1: Extract audio
+                    st.info("Extracting audio...")
+                    audio_path = extract_audio_from_video(video_path, audio_dir)
+                    
+                    if not audio_path:
+                        st.error(f"Failed to extract audio from {uploaded_file.name}")
+                        continue
+                    
+                    # Step 2: Transcribe audio
+                    st.info("Transcribing audio...")
+                    transcript = transcribe_audio(openai_client, audio_path)
+                    
+                    if not transcript:
+                        st.error(f"Failed to transcribe audio from {uploaded_file.name}")
+                        continue
+                    
+                    # Save transcription
+                    basename = os.path.splitext(uploaded_file.name)[0]
+                    transcript_path = save_transcription(transcript, transcript_dir, basename)
+                    
+                    # Step 3: Capture first frame
+                    st.info("Capturing screenshot...")
+                    screenshot_path = capture_first_frame(video_path, screenshot_dir)
+                    
+                    if not screenshot_path:
+                        st.error(f"Failed to capture screenshot from {uploaded_file.name}")
+                        continue
+                    
+                    # Step 4: Analyze video content
+                    st.info("Analyzing video content...")
+                    video_analysis = analyze_video_content(openai_client, video_path, screenshot_path, transcript)
+                    
+                    # Add processed video to session state
+                    st.session_state.processed_videos.append({
+                        "name": uploaded_file.name,
+                        "path": video_path,
+                        "transcript": transcript,
+                        "screenshot": screenshot_path,
+                        "analysis": video_analysis
+                    })
+                    
+                    st.success(f"Processed {uploaded_file.name} successfully!")
+                    st.json(video_analysis)
+
+# Trailer generation tab
+with tab2:
+    st.title("Generate Petition Trailer")
+    
+    if not st.session_state.processed_videos:
+        st.warning("Please upload and process videos in the Upload tab first")
+    else:
+        # Display processed videos
+        st.subheader("Processed Videos")
+        for i, video in enumerate(st.session_state.processed_videos):
+            with st.expander(f"Video {i+1}: {video['name']}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.image(video["screenshot"], caption=f"Screenshot from {video['name']}")
+                with col2:
+                    st.json(video["analysis"])
+                st.text_area("Transcript", video["transcript"], height=150)
+        
+        # Generate trailer button
+        if st.button("Generate Trailer Plan"):
+            if not anthropic_client:
+                st.error("Missing Claude API key!")
+            else:
+                with st.spinner("Generating trailer plan with Claude..."):
+                    # Prepare data for Claude
+                    videos_data = []
+                    for i, video in enumerate(st.session_state.processed_videos):
+                        videos_data.append({
+                            "id": i+1,
+                            "name": video["name"],
+                            "transcript": video["transcript"],
+                            "analysis": video["analysis"]
+                        })
+                    
+                    # Call Claude to generate a trailer plan
+                    trailer_plan, reasoning = generate_trailer_plan(anthropic_client, videos_data)
+                    
+                    # Store in session state
+                    st.session_state.trailer_plan = trailer_plan
+                    st.session_state.reasoning = reasoning
+        
+        # Display the trailer plan if available
+        if st.session_state.trailer_plan:
+            st.subheader("Claude's Reasoning")
+            st.write(st.session_state.reasoning)
+            
+            st.subheader("Trailer Plan")
+            st.write(st.session_state.trailer_plan)
+            
+            # Execute trailer generation
+            if st.button("Create Trailer"):
+                with st.spinner("Creating trailer..."):
+                    result = create_trailer_from_plan(
+                        st.session_state.processed_videos,
+                        st.session_state.trailer_plan,
+                        output_dir
+                    )
+                    
+                    if result:
+                        st.success("Trailer created successfully!")
+                        st.video(result)
+                    else:
+                        st.error("Failed to create trailer")
+
+# Stylization tab (placeholder for future development)
+with tab3:
+    st.title("Stylize Your Trailer (Coming Soon)")
+    st.info("This feature will allow you to stylize your trailer with Canva templates and background music.")
+    st.warning("This feature is under development and will be available soon.")
+
 
 # Main app execution starts here
 if __name__ == "__main__":
