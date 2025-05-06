@@ -710,17 +710,29 @@ def create_fade_transition(duration, output_path):
         return None
         
 def extract_audio_from_video(video_path, output_dir):
-    """Extract audio from video file"""
-    filename = os.path.basename(video_path)
-    basename = os.path.splitext(filename)[0]
-    audio_path = os.path.join(output_dir, f"{basename}.mp3")
+    """Extract audio from video file using Python libraries instead of ffmpeg"""
     try:
-        cmd = f'ffmpeg -y -i "{video_path}" -q:a 0 -map a "{audio_path}"'
-        subprocess.run(cmd, shell=True, check=True)
-        if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
-            return audio_path
+        import moviepy.editor as mp
+        
+        filename = os.path.basename(video_path)
+        basename = os.path.splitext(filename)[0]
+        audio_path = os.path.join(output_dir, f"{basename}.mp3")
+        
+        # Using moviepy to extract audio
+        video = mp.VideoFileClip(video_path)
+        audio = video.audio
+        
+        if audio is not None:
+            audio.write_audiofile(audio_path)
+            video.close()
+            
+            if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+                return audio_path
+            else:
+                st.error(f"Failed to extract audio from {filename}")
+                return None
         else:
-            st.error(f"Failed to extract audio from {filename}")
+            st.error(f"No audio stream found in {filename}")
             return None
     except Exception as e:
         st.error(f"Error extracting audio from {filename}: {str(e)}")
