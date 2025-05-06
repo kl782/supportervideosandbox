@@ -815,8 +815,8 @@ def capture_first_frame(video_path, output_dir):
         st.error(f"Error capturing first frame from {filename}: {str(e)}")
         return None
 
-def analyze_video_content(client, video_path, screenshot_path, transcript):
-    """Analyze video content using OpenAI GPT-4o vision and transcript"""
+def analyze_video_content(video_path, screenshot_path, transcript):
+    """Analyze video content using OpenAI GPT-4o vision via direct HTTP request"""
     try:
         # Encode the screenshot
         with open(screenshot_path, "rb") as img_file:
@@ -845,9 +845,17 @@ def analyze_video_content(client, video_path, screenshot_path, transcript):
         }}
         """
         
-        response = client.chat.completions.create(
-            model="gpt-4o",  # Updated to use gpt-4o
-            messages=[
+        # Direct API call using requests
+        import requests
+        
+        headers = {
+            "Authorization": f"Bearer {st.secrets['openai']['api_key']}",
+            "Content-Type": "application/json"
+        }
+        
+        data = {
+            "model": "gpt-4o",
+            "messages": [
                 {
                     "role": "user",
                     "content": [
@@ -861,19 +869,33 @@ def analyze_video_content(client, video_path, screenshot_path, transcript):
                     ]
                 }
             ],
-            max_tokens=1000,
-            response_format={"type": "json_object"}
+            "max_tokens": 1000,
+            "response_format": {"type": "json_object"}
+        }
+        
+        response = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers=headers,
+            json=data
         )
         
-        # Validate response before parsing JSON
-        if (response and hasattr(response, 'choices') and 
-            len(response.choices) > 0 and 
-            hasattr(response.choices[0], 'message') and 
-            hasattr(response.choices[0].message, 'content') and
-            response.choices[0].message.content):
-            
+        if response.status_code != 200:
+            st.error(f"OpenAI API call failed with status code: {response.status_code}")
+            st.error(f"Response: {response.text}")
+            return {
+                "speaker_type": "unknown",
+                "main_message": "Error analyzing content",
+                "petition_relevance": "unknown",
+                "demographic_notes": "unknown",
+                "content_type": "unknown"
+            }
+        
+        response_json = response.json()
+        
+        if "choices" in response_json and len(response_json["choices"]) > 0:
+            content = response_json["choices"][0]["message"]["content"]
             try:
-                return json.loads(response.choices[0].message.content)
+                return json.loads(content)
             except json.JSONDecodeError as json_err:
                 st.error(f"Invalid JSON in API response: {str(json_err)}")
         else:
@@ -897,6 +919,7 @@ def analyze_video_content(client, video_path, screenshot_path, transcript):
             "demographic_notes": "unknown",
             "content_type": "unknown"
         }
+
 
 # Set page configuration
 st.set_page_config(
@@ -1017,7 +1040,7 @@ with tab1:
                             continue
                         
                         # Step 4: Analyze video content
-                        video_analysis = analyze_video_content(openai_client, video_path, screenshot_path, transcript)
+                        video_analysis = analyze_video_content(video_path, screenshot_path, transcript)
                         
                         # Add processed video to session state
                         st.session_state.processed_videos.append({
