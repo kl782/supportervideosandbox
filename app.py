@@ -98,8 +98,8 @@ def create_text_overlay(input_path, output_path, text, segment_id):
         st.error(f"Error creating text overlay: {str(e)}")
         return input_path
 
-def generate_trailer_plan(client, videos_data):
-    """Generate a trailer plan using Claude"""
+def generate_trailer_plan(videos_data):
+    """Generate a trailer plan using Claude via direct API call"""
     try:
         # Prepare prompt for Claude
         prompt = f"""
@@ -130,17 +130,34 @@ def generate_trailer_plan(client, videos_data):
         Format the trailer plan as a structured list or JSON format that can be parsed by my application.
         """
         
-        # Call Claude API - updated to match current API structure
-        response = client.messages.create(
-            model="claude-3-7-sonnet-20250219",
-            max_tokens=4000,
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
+        # Direct API call using requests
+        import requests
+        
+        headers = {
+            "x-api-key": st.secrets["anthropic"]["api_key"],
+            "content-type": "application/json",
+            "anthropic-version": "2023-06-01"
+        }
+        
+        data = {
+            "model": "claude-3-7-sonnet-20250219",
+            "max_tokens": 4000,
+            "messages": [{"role": "user", "content": prompt}]
+        }
+        
+        response = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers=headers,
+            json=data
         )
         
-        # Extract the content from the response
-        content = response.content[0].text
+        if response.status_code != 200:
+            st.error(f"API call failed with status code: {response.status_code}")
+            st.error(f"Response: {response.text}")
+            return "Failed to generate trailer plan", f"Error: API call failed with status code {response.status_code}"
+        
+        response_json = response.json()
+        content = response_json.get('content', [{}])[0].get('text', str(response_json))
         
         # Split the response into reasoning and plan parts
         parts = content.split("PART 2:")
@@ -157,7 +174,8 @@ def generate_trailer_plan(client, videos_data):
     except Exception as e:
         st.error(f"Error generating trailer plan: {str(e)}")
         return "Failed to generate trailer plan", f"Error: {str(e)}"
-        
+
+
 def create_trailer_segment(video_info, clip_info, output_dir, segment_id):
     """Create a segment for the trailer"""
     try:
@@ -1041,8 +1059,8 @@ with tab1:
         
         # Generate trailer button
         if st.button("Generate Trailer Plan"):
-            if not anthropic_client:
-                st.error("Missing Claude API key!")
+            if "anthropic" not in st.secrets or "api_key" not in st.secrets["anthropic"]:
+                st.error("Please add your Anthropic API key to the Streamlit secrets")
             else:
                 with st.spinner("Generating trailer plan with Claude..."):
                     # Prepare data for Claude
@@ -1056,7 +1074,7 @@ with tab1:
                         })
                     
                     # Call Claude to generate a trailer plan
-                    trailer_plan, reasoning = generate_trailer_plan(anthropic_client, videos_data)
+                    trailer_plan, reasoning = generate_trailer_plan(videos_data)
                     
                     # Store in session state
                     st.session_state.trailer_plan = trailer_plan
