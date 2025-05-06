@@ -930,85 +930,102 @@ with tab1:
     uploaded_files = st.file_uploader("Upload Video Files", type=["mp4", "mov", "avi"], accept_multiple_files=True)
     
     if uploaded_files:
-        st.write("Uploaded Videos:")
+        st.write(f"Uploaded {len(uploaded_files)} videos")
         
-        for uploaded_file in uploaded_files:
+        # Display thumbnails of uploaded videos in a grid
+        cols = st.columns(min(3, len(uploaded_files)))
+        for i, uploaded_file in enumerate(uploaded_files):
             # Save uploaded file to disk
             video_path = os.path.join(temp_dir, uploaded_file.name)
             with open(video_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
             
-            # Display video info
-            st.video(video_path)
-            
-            # Process button for each video
-            if st.button(f"Process {uploaded_file.name}", key=f"process_{uploaded_file.name}"):
-                if not openai_client:
-                    st.error("Please enter your OpenAI API key in the sidebar to process videos")
-                    continue
+            # Display video thumbnail in grid
+            with cols[i % 3]:
+                st.video(video_path, start_time=0)
+                st.caption(uploaded_file.name)
+        
+        # Process all videos button
+        if st.button("Process All Videos"):
+            if not openai_client:
+                st.error("Please check your OpenAI API key in the Streamlit secrets")
+            else:
+                # Clear any existing processed videos
+                st.session_state.processed_videos = []
                 
-                with st.spinner(f"Processing {uploaded_file.name}..."):
-                    # Step 1: Extract audio
-                    st.info("Extracting audio...")
-                    audio_path = extract_audio_from_video(video_path, audio_dir)
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i, uploaded_file in enumerate(uploaded_files):
+                    video_path = os.path.join(temp_dir, uploaded_file.name)
+                    status_text.text(f"Processing {uploaded_file.name}...")
                     
-                    if not audio_path:
-                        st.error(f"Failed to extract audio from {uploaded_file.name}")
-                        continue
+                    with st.spinner(f"Processing {uploaded_file.name}..."):
+                        # Step 1: Extract audio
+                        audio_path = extract_audio_from_video(video_path, audio_dir)
+                        
+                        if not audio_path:
+                            st.error(f"Failed to extract audio from {uploaded_file.name}")
+                            continue
+                        
+                        # Step 2: Transcribe audio
+                        transcript = transcribe_audio(openai_client, audio_path)
+                        
+                        if not transcript:
+                            st.error(f"Failed to transcribe audio from {uploaded_file.name}")
+                            continue
+                        
+                        # Save transcription
+                        basename = os.path.splitext(uploaded_file.name)[0]
+                        transcript_path = save_transcription(transcript, transcript_dir, basename)
+                        
+                        # Step 3: Capture first frame
+                        screenshot_path = capture_first_frame(video_path, screenshot_dir)
+                        
+                        if not screenshot_path:
+                            st.error(f"Failed to capture screenshot from {uploaded_file.name}")
+                            continue
+                        
+                        # Step 4: Analyze video content
+                        video_analysis = analyze_video_content(openai_client, video_path, screenshot_path, transcript)
+                        
+                        # Add processed video to session state
+                        st.session_state.processed_videos.append({
+                            "name": uploaded_file.name,
+                            "path": video_path,
+                            "transcript": transcript,
+                            "screenshot": screenshot_path,
+                            "analysis": video_analysis
+                        })
                     
-                    # Step 2: Transcribe audio
-                    st.info("Transcribing audio...")
-                    transcript = transcribe_audio(openai_client, audio_path)
-                    
-                    if not transcript:
-                        st.error(f"Failed to transcribe audio from {uploaded_file.name}")
-                        continue
-                    
-                    # Save transcription
-                    basename = os.path.splitext(uploaded_file.name)[0]
-                    transcript_path = save_transcription(transcript, transcript_dir, basename)
-                    
-                    # Step 3: Capture first frame
-                    st.info("Capturing screenshot...")
-                    screenshot_path = capture_first_frame(video_path, screenshot_dir)
-                    
-                    if not screenshot_path:
-                        st.error(f"Failed to capture screenshot from {uploaded_file.name}")
-                        continue
-                    
-                    # Step 4: Analyze video content
-                    st.info("Analyzing video content...")
-                    video_analysis = analyze_video_content(openai_client, video_path, screenshot_path, transcript)
-                    
-                    # Add processed video to session state
-                    st.session_state.processed_videos.append({
-                        "name": uploaded_file.name,
-                        "path": video_path,
-                        "transcript": transcript,
-                        "screenshot": screenshot_path,
-                        "analysis": video_analysis
-                    })
-                    
-                    st.success(f"Processed {uploaded_file.name} successfully!")
-                    st.json(video_analysis)
-
-# Trailer generation tab
-with tab2:
-    st.title("Generate Petition Trailer")
+                    # Update progress
+                    progress_bar.progress((i + 1) / len(uploaded_files))
+                
+                progress_bar.progress(100)
+                status_text.text(f"Processed {len(uploaded_files)} videos successfully!")
+                
+                # Show summary of processed videos
+                st.success(f"Processed {len(st.session_state.processed_videos)} videos. Switch to the 'Generate Trailer' tab to create your trailer.")
     
-    if not st.session_state.processed_videos:
-        st.warning("Please upload and process videos in the Upload tab first")
-    else:
-        # Display processed videos
-        st.subheader("Processed Videos")
-        for i, video in enumerate(st.session_state.processed_videos):
-            with st.expander(f"Video {i+1}: {video['name']}"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.image(video["screenshot"], caption=f"Screenshot from {video['name']}")
-                with col2:
-                    st.json(video["analysis"])
-                st.text_area("Transcript", video["transcript"], height=150)
+    # Trailer generation tab
+    with tab2:
+        st.title("Generate Petition Trailer")
+        
+        if not st.session_state.processed_videos:
+            st.warning("Please upload and process videos in the Upload tab first")
+        else:
+            # Display processed videos summary
+            st.subheader(f"Processed Videos: {len(st.session_state.processed_videos)}")
+            
+            # Create an expandable section for each video
+            for i, video in enumerate(st.session_state.processed_videos):
+                with st.expander(f"Video {i+1}: {video['name']}"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.image(video["screenshot"], caption=f"Screenshot from {video['name']}")
+                    with col2:
+                        st.json(video["analysis"])
+                    st.text_area("Transcript", video["transcript"], height=150)
         
         # Generate trailer button
         if st.button("Generate Trailer Plan"):
